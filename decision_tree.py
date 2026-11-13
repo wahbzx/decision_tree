@@ -1,7 +1,10 @@
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 import math
 
+# Depending on the format of the data, its better to write a custom data loader
 def load_wifi(file_path):
     data = np.loadtxt(file_path)
     x = data[:, 0:-1]
@@ -49,18 +52,16 @@ def get_entropy(train_y):
     return entropy
 
 
-# Requires sorted data and the column the data was sorted on
-def get_candidate_splits(sorted_x, sorted_y, col_sort):
+def get_candidate_splits(sorted_x, sorted_y):
     splits = []
     prev_val = None
     prev_label = None
     for i in range(len(sorted_x)):
-        # TODO: require a list of labels seperately so its more data agnostic
-        feature = sorted_x[i, col_sort]
+        feature = sorted_x[i]
         label = sorted_y[i]
         if (prev_val is not None and prev_val != feature) and (prev_label is not None and prev_label != label):
             mid = prev_val + ((feature - prev_val) / 2)
-            splits.append((mid, label))
+            splits.append((mid, label, i))
         prev_val = feature
         prev_label = label
     return splits
@@ -76,33 +77,24 @@ def find_split(data):
     train_x, train_y = data
     # Entropy for dataset
     h_data = get_entropy(train_y)
-    # Last column is label
     no_attr = train_x.shape[1]
     best_split = None
     for col in range(no_attr):
         indices = np.argsort(train_x[:, col])
-        sorted_x = train_x[indices]
+        sorted_x = train_x[indices,col]
         sorted_y = train_y[indices]
-        splits = get_candidate_splits(sorted_x, sorted_y, col)
+        splits = get_candidate_splits(sorted_x, sorted_y)
         # Max information gain (split_point, Info Gain)
         max_ig = (-1, -1)
         for s in splits:
-            left_train_x = []
-            left_train_y = []
-            right_train_x = []
-            right_train_y = []
-            # This filtering on sorted data can be made more efficient by also returning the index to split on
-            for i in range(len(sorted_x)):
-                if sorted_x[i, col] < s[0]:
-                    left_train_x.append(sorted_x[i, col])
-                    left_train_y.append( sorted_y[i])
-                else:
-                    right_train_x.append(sorted_x[i, col])
-                    right_train_y.append(sorted_y[i])
+            split_index = s[2]
+            left_train_y = sorted_y[:split_index]
+            right_train_y = sorted_y[split_index:]
             total_entropy = (len(left_train_y)/len(train_y)) * get_entropy(left_train_y) + (len(right_train_y)/len(train_y)) * get_entropy(right_train_y)
             max_ig = max(max_ig, (s[0], h_data - total_entropy), key= lambda x: x[1])
         if best_split and max_ig[1] > best_split[1][1]:
             best_split = (col, max_ig)
+        # If best_split has not been initialised yet, set it
         if not best_split:
             best_split = (col, max_ig)
     return best_split
@@ -134,7 +126,6 @@ def decision_tree_learning(training_dataset, depth):
             else:
                 r_data_x.append(train_x[i])
                 r_data_y.append(train_y[i])
-        
         l_branch, l_depth = decision_tree_learning((np.array(l_data_x), np.array(l_data_y)), depth+1)
         r_branch, r_depth = decision_tree_learning((np.array(r_data_x), np.array(r_data_y)), depth+1)
         node["left"] = l_branch
@@ -200,13 +191,11 @@ def plot_tree(result, file_name="decision_tree"):
         return x, leaf_count
 
     _, leaf_count = calc_pos(tree)
-    fig, ax = plt.subplots(
-        figsize=(leaf_count, max_depth)
-    )
+    print(f"{leaf_count} Leaves")
+    fig, ax = plt.subplots(figsize=(leaf_count, max_depth))
 
     # Draw the tree
     def draw(node):
-        
         x, y = positions[id(node)]
         if node["attribute"] == "leaf":
             label = f"Class {node['value']}"
@@ -218,27 +207,18 @@ def plot_tree(result, file_name="decision_tree"):
             x, y, label,
             ha="center", va="center",
             fontsize=9,
-            bbox=dict(
-                facecolor=colour,
-                edgecolor="black"
-            ),
+            bbox=dict(facecolor=colour, edgecolor="black"),
             zorder=2
         )
         # Draw all the arrows between the boxes
         if not node["attribute"] == "leaf":
-            for decision, child in [
-                ("Yes", node["left"]),
-                ("No", node["right"])
-            ]:
+            for decision, child in [("Yes", node["left"]),("No", node["right"])]:
                 child_x, child_y = positions[id(child)]
                 ax.annotate(
                     "",
                     xy=(child_x, child_y),
                     xytext=(x, y),
-                    arrowprops=dict(
-                        arrowstyle="-",
-                        color="black",
-                    ),
+                    arrowprops=dict(arrowstyle="-",color="black"),
                     zorder=1
                 )
                 ax.text(
@@ -256,7 +236,9 @@ def plot_tree(result, file_name="decision_tree"):
     ax.axis("off")
 
     plt.tight_layout()
-    plt.savefig(file_name+".svg", bbox_inches="tight")
+    folder = "tree_diagrams/"
+    os.makedirs(folder, exist_ok=True)
+    plt.savefig(folder+file_name+".svg", bbox_inches="tight")
 
 
 if __name__ == "__main__":
