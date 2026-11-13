@@ -2,53 +2,67 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 
-
-# Data Loading
-def create_split_data(file_path, training_ratio):
-    '''
-    Load file data and split into training and testing data
-    according to a specified ratio e.g 0.8 where 80% is training and 20% testing
-    equally distributed set of each
-    '''
+def load_wifi(file_path):
     data = np.loadtxt(file_path)
+    x = data[:, 0:-1]
+    y = data[:, -1]
+    classes, y = np.unique(y, return_inverse=True)
+    return x,y,classes
+
+def load_iris(file_path):
+    x = np.loadtxt('iris.data', delimiter=',', usecols=(0, 1, 2, 3))
+    y = np.loadtxt('iris.data', delimiter=',', usecols=4, dtype=str)
+    classes, y = np.unique(y, return_inverse=True)
+    return x,y,classes
+    
+
+def create_split_data(x,y, training_ratio):
+    assert x.shape[0] == y.shape[0]
     rooms = {}
-    for i in data:
-        r = i[7]
+    for i in range(0,len(y)):
+        r = y[i]
+        instance = x[i]
         if r in rooms:
-            rooms[r].append(i)
+            rooms[r].append(instance)
         else:
-            rooms[r] = [i]
-    train = []
-    test = []
+            rooms[r] = [instance]
+    train_x = []
+    train_y = []
+    test_x = []
+    test_y = []
     for k in rooms:
         room_data = rooms[k]
+        room_labels = [k for i in range(len(room_data))]
         split_point = int(len(room_data)*training_ratio)
-        train += room_data[:split_point]
-        test += room_data[split_point:]
-    return np.array(train), np.array(test)
+        train_x += room_data[:split_point]
+        train_y += room_labels[:split_point]
+        test_x += room_data[split_point:]
+        test_y += room_labels[split_point:]
+    return np.array(train_x), np.array(train_y), np.array(test_x), np.array(test_y)
 
-# Training
-            
-def get_entropy(data):
-    total = len(data)
-    labels, counts = np.unique(data[:, -1], return_counts=True)
+def get_entropy(train_y):
+    total = len(train_y)
+    labels, counts = np.unique(train_y, return_counts=True)
     entropy = 0
     for c in counts:
         entropy += -c/total * math.log2(c/total)
     return entropy
 
+
 # Requires sorted data and the column the data was sorted on
-def get_candidate_splits(sorted_data, col_sort):
+def get_candidate_splits(sorted_x, sorted_y, col_sort):
     splits = []
     prev_val = None
     prev_label = None
-    for d in sorted_data:
+    for i in range(len(sorted_x)):
         # TODO: require a list of labels seperately so its more data agnostic
-        if prev_val and prev_val != d[col_sort] and prev_label and prev_label != d[7]:
-            mid = prev_val + ((d[col_sort] - prev_val) / 2)
-            splits.append((mid, d[7]))
-        prev_val = d[col_sort]
-        prev_label = d[7]
+        feature = sorted_x[i, col_sort]
+        label = sorted_y[i]
+        if (prev_val is not None and prev_val != feature) and (prev_label is not None and prev_label != label):
+            mid = prev_val + ((feature - prev_val) / 2)
+            splits.append((mid, label))
+        prev_val = feature
+        prev_label = label
     return splits
 
 def find_split(data):
@@ -59,24 +73,33 @@ def find_split(data):
     - Repeat for each attribute and return the attr and split
     - resulting in the highest IG
     '''
+    train_x, train_y = data
     # Entropy for dataset
-    h_data = get_entropy(data)
+    h_data = get_entropy(train_y)
     # Last column is label
-    no_attr = data.shape[1] - 1
+    no_attr = train_x.shape[1]
     best_split = None
-    for col in range(0, no_attr):
-        sorted_data = data[data[:, col].argsort()]
-        splits = get_candidate_splits(sorted_data, col)
+    for col in range(no_attr):
+        indices = np.argsort(train_x[:, col])
+        sorted_x = train_x[indices]
+        sorted_y = train_y[indices]
+        splits = get_candidate_splits(sorted_x, sorted_y, col)
         # Max information gain (split_point, Info Gain)
         max_ig = (-1, -1)
         for s in splits:
-            filter_left = data[:, col] < s[0]
-            filter_right = data[:, col] >= s[0]
-    
-            left_data = data[filter_left]
-            right_data = data[filter_right]
-            
-            total_entropy = (len(left_data)/len(data)) * get_entropy(left_data) + (len(right_data)/len(data)) * get_entropy(right_data)
+            left_train_x = []
+            left_train_y = []
+            right_train_x = []
+            right_train_y = []
+            # This filtering on sorted data can be made more efficient by also returning the index to split on
+            for i in range(len(sorted_x)):
+                if sorted_x[i, col] < s[0]:
+                    left_train_x.append(sorted_x[i, col])
+                    left_train_y.append( sorted_y[i])
+                else:
+                    right_train_x.append(sorted_x[i, col])
+                    right_train_y.append(sorted_y[i])
+            total_entropy = (len(left_train_y)/len(train_y)) * get_entropy(left_train_y) + (len(right_train_y)/len(train_y)) * get_entropy(right_train_y)
             max_ig = max(max_ig, (s[0], h_data - total_entropy), key= lambda x: x[1])
         if best_split and max_ig[1] > best_split[1][1]:
             best_split = (col, max_ig)
@@ -86,7 +109,8 @@ def find_split(data):
 
 
 def decision_tree_learning(training_dataset, depth):
-    labels, counts = np.unique(training_dataset[:, -1], return_counts=True)
+    train_x, train_y = training_dataset
+    labels, counts = np.unique(train_y, return_counts=True)
     col, max_ig = find_split(training_dataset)
     if len(np.unique(labels)) == 1:
         node = {"attribute":"leaf", "value":labels[0], "left":"", "right":""}
@@ -99,12 +123,20 @@ def decision_tree_learning(training_dataset, depth):
     else:
         val = max_ig[0]
         node = {"attribute":col, "value":val, "left":"", "right":""}
-        filter_left = training_dataset[:, col] < val
-        filter_right = training_dataset[:, col] >= val
-        l_data = training_dataset[filter_left]
-        r_data = training_dataset[filter_right]
-        l_branch, l_depth = decision_tree_learning(l_data, depth+1)
-        r_branch, r_depth = decision_tree_learning(r_data, depth+1)
+        l_data_x = []
+        l_data_y = []
+        r_data_x = []
+        r_data_y = []
+        for i in range(0, len(train_x)):
+            if train_x[i, col] < val:
+                l_data_x.append(train_x[i])
+                l_data_y.append(train_y[i])
+            else:
+                r_data_x.append(train_x[i])
+                r_data_y.append(train_y[i])
+        
+        l_branch, l_depth = decision_tree_learning((np.array(l_data_x), np.array(l_data_y)), depth+1)
+        r_branch, r_depth = decision_tree_learning((np.array(r_data_x), np.array(r_data_y)), depth+1)
         node["left"] = l_branch
         node["right"] = r_branch
         return (node, max(l_depth, r_depth))
@@ -112,7 +144,8 @@ def decision_tree_learning(training_dataset, depth):
 # Evaluation
 
 def get_confusion_matrix(test_pred, test_real):
-    conf_mat = np.zeros((4,4), int)
+    dim = len(np.unique(test_real))
+    conf_mat = np.zeros((dim,dim), int)
     pred_map = {}
     for i in range(0,len(test_real)):
         real = test_real[i]
@@ -130,22 +163,20 @@ def get_accuracy(test_predictions, test_real):
     return correct/len(test_predictions)
 
     
-def evaluate(test_data, tree):
-    point = test_data[0]
-    test_real = test_data[:, -1]
-    test_predictions = []
-    for point in test_data:
+def evaluate(test_x, test_y, tree):
+    test_pred = []
+    for i in range(len(test_x)):
         node = tree[0]
         while node["attribute"] != "leaf":
-            if point[node["attribute"]] < node["value"]:
+            if test_x[i, node["attribute"]] < node["value"]:
                 node = node["left"]
             else:
                 node = node["right"]
-        test_predictions.append(node["value"])
-    test_predictions = np.array(test_predictions)
-    conf_mat = get_confusion_matrix(test_predictions, test_real)
-    print(conf_mat)
-    return get_accuracy(test_predictions, test_real)
+        test_pred.append(node["value"])
+    test_pred = np.array(test_pred)
+    conf_mat = get_confusion_matrix(test_pred, test_y)
+    print(f"Confusion Matrix: \n{conf_mat}")
+    return get_accuracy(test_pred, test_y)
 
 # Draw tree diagram
 
@@ -178,7 +209,7 @@ def plot_tree(result, file_name="decision_tree"):
         
         x, y = positions[id(node)]
         if node["attribute"] == "leaf":
-            label = f"Class {int(node['value'])}"
+            label = f"Class {node['value']}"
             colour = leaf_colour
         else:
             label = f"X[{node['attribute']}] < {node['value']:.2f}"
@@ -226,23 +257,35 @@ def plot_tree(result, file_name="decision_tree"):
 
     plt.tight_layout()
     plt.savefig(file_name+".svg", bbox_inches="tight")
-    print(f"Saved diagram to {file_name}.svg")
-
 
 
 if __name__ == "__main__":
+    print("Clean dataset: ")
     path = "wifi_db/clean_dataset.txt"
-    train, test = create_split_data(path, 0.8)
-    tree_clean = decision_tree_learning(train, 0)
-    accuracy_clean = evaluate(test, tree_clean)
+    x,y,classes = load_wifi(path)
+    train_x, train_y, test_x, test_y = create_split_data(x,y, 0.8)
+    training_dataset_clean = (train_x, train_y)
+    tree_clean = decision_tree_learning(training_dataset_clean, 0)
+    accuracy_clean = evaluate(test_x, test_y, tree_clean)
     plot_tree(tree_clean, "clean")
 
+    print("Noisy Dataset: ")
     path = "wifi_db/noisy_dataset.txt"
-    train, test = create_split_data(path, 0.8)
-    tree_noisy = decision_tree_learning(train, 0)
-    accuracy_noisy = evaluate(test, tree_noisy)
-
+    x,y,classes = load_wifi(path)
+    train_x, train_y, test_x, test_y = create_split_data(x,y, 0.8)
+    training_dataset_noisy = (train_x, train_y)
+    tree_noisy = decision_tree_learning(training_dataset_noisy, 0)
+    accuracy_noisy = evaluate(test_x, test_y, tree_noisy)
     plot_tree(tree_noisy, "noisy")
 
-    print(f"Clean dataset accuracy: {accuracy_clean*100}%")
-    print(f"Noisy dataset accuracy: {accuracy_noisy*100}%")
+    print(f"Clean dataset accuracy: {round(accuracy_clean*100, 2)}%")
+    print(f"Noisy dataset accuracy: {round(accuracy_noisy*100, 2)}%")
+
+    path = "iris.data"
+    x,y,classes = load_iris(path)
+    train_x, train_y, test_x, test_y = create_split_data(x,y, 0.8)
+    training_dataset = (train_x, train_y)
+    tree_iris = decision_tree_learning(training_dataset, 0)
+    accuracy = evaluate(test_x, test_y, tree_iris)
+    print(f"Iris dataset accuracy: {round(accuracy*100,2)}%")
+    plot_tree(tree_iris, "iris")
