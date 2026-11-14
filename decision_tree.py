@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+from numpy.random import default_rng
 import matplotlib.pyplot as plt
 import math
 
@@ -166,7 +167,7 @@ def evaluate(test_x, test_y, tree):
         test_pred.append(node["value"])
     test_pred = np.array(test_pred)
     conf_mat = get_confusion_matrix(test_pred, test_y)
-    print(f"Confusion Matrix: \n{conf_mat}")
+    # print(f"Confusion Matrix: \n{conf_mat}")
     return get_accuracy(test_pred, test_y)
 
 # Draw tree diagram
@@ -241,33 +242,72 @@ def plot_tree(result, file_name="decision_tree"):
     plt.savefig(folder+file_name+".svg", bbox_inches="tight")
 
 
+# Stratified K-fold cross validation
+# 1. Split intro stratas
+# 2. Shuffle the instances within each strata
+# 3. Split each strata into k partitions
+# 4. Rotate the held out test fold across all k iterations
+# 5. Use the remaining k-1 folds for training across all k iterations
+def k_fold_cross(x,y,seed):
+    k=10
+    rg = default_rng(seed)
+    # Split intro stratas
+    stratas = {}
+    for i in range(0,len(y)):
+        s = y[i]
+        instance = x[i]
+        if s in stratas:
+            stratas[s].append(instance)
+        else:
+            stratas[s] = [instance]
+    # Shuffle the instances within each strata
+    for s in stratas:
+        folds = np.array_split(rg.permutation(stratas[s]), k)
+        stratas[s] = folds
+    # every fold gets its own time to shine as the test fold
+    accuracies = []
+    for i in range(k):
+        train_list_x = []
+        train_list_y = []
+        test_list_x = []
+        test_list_y = []
+        for s in stratas:
+            # Extract test fold
+            test_fold = stratas[s][i]
+            test_list_x.append(test_fold)
+            test_list_y.append(np.full(len(test_fold), s))
+            # Extract training folds
+            for j, fold in enumerate(stratas[s]):
+                if j != i:
+                    train_list_x.append(fold)
+                    train_list_y.append(np.full(len(fold), s))
+        
+        # Convert to np array by stacking them in row-major format           
+        train_x = np.vstack(train_list_x)
+        test_x = np.vstack(test_list_x)
+        train_y = np.concatenate(train_list_y)
+        test_y = np.concatenate(test_list_y)
+        # Train using this split and evaluate tree
+        training_dataset = (train_x, train_y)
+        tree = decision_tree_learning(training_dataset, 0)
+        accuracy = evaluate(test_x, test_y, tree)
+        accuracies.append(accuracy)
+    
+    print(f"Mean accuracy: {(np.mean(accuracies)*100):.2f}%")
+    print(f"Std deviation across folds: ± {(np.std(accuracies)*100):.2f}%")
+    return accuracies
+
 if __name__ == "__main__":
-    print("Clean dataset: ")
+    seed = 1337
     path = "wifi_db/clean_dataset.txt"
     x,y,classes = load_wifi(path)
-    train_x, train_y, test_x, test_y = create_split_data(x,y, 0.8)
-    training_dataset_clean = (train_x, train_y)
-    tree_clean = decision_tree_learning(training_dataset_clean, 0)
-    accuracy_clean = evaluate(test_x, test_y, tree_clean)
-    plot_tree(tree_clean, "clean")
+    print("Results for clean dataset")
+    accuracies = k_fold_cross(x, y, seed)
 
-    print("Noisy Dataset: ")
+    print("\n")
+
     path = "wifi_db/noisy_dataset.txt"
     x,y,classes = load_wifi(path)
-    train_x, train_y, test_x, test_y = create_split_data(x,y, 0.8)
-    training_dataset_noisy = (train_x, train_y)
-    tree_noisy = decision_tree_learning(training_dataset_noisy, 0)
-    accuracy_noisy = evaluate(test_x, test_y, tree_noisy)
-    plot_tree(tree_noisy, "noisy")
-
-    print(f"Clean dataset accuracy: {round(accuracy_clean*100, 2)}%")
-    print(f"Noisy dataset accuracy: {round(accuracy_noisy*100, 2)}%")
-
-    path = "iris.data"
-    x,y,classes = load_iris(path)
-    train_x, train_y, test_x, test_y = create_split_data(x,y, 0.8)
-    training_dataset = (train_x, train_y)
-    tree_iris = decision_tree_learning(training_dataset, 0)
-    accuracy = evaluate(test_x, test_y, tree_iris)
-    print(f"Iris dataset accuracy: {round(accuracy*100,2)}%")
-    plot_tree(tree_iris, "iris")
+    seed = 1337
+    print("Results for noisy dataset")
+    accuracies = k_fold_cross(x, y, seed)
